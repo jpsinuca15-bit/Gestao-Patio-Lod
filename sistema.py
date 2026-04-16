@@ -16,7 +16,20 @@ def carregar_dados(query):
 st.set_page_config(page_title="Gestão de Pátio LOD", layout="wide")
 st.title("🏗️ Gestão de Pátio LOD")
 
-# 3. MENU LATERAL
+# 3. LÓGICA DE CONSUMO (A "RECEITA" DOS PRODUTOS)
+# Valores fictícios por unidade - AJUSTE conforme sua necessidade real
+receitas = {
+    "Bloco de 10": {"Cimento": 0.05, "Pó de Pedra": 0.01, "Pedrisco": 0.01},
+    "Bloco de 15": {"Cimento": 0.07, "Pó de Pedra": 0.015, "Pedrisco": 0.015},
+    "Bloco de 20": {"Cimento": 0.10, "Pó de Pedra": 0.02, "Pedrisco": 0.02},
+    "Bloco Sextavado": {"Cimento": 0.12, "Brita 0": 0.02, "Areia": 0.02, "Pó de Pedra": 0.02},
+    "Bloco Intertravado": {"Cimento": 0.08, "Brita 0": 0.015, "Areia": 0.015, "Pó de Pedra": 0.015},
+    "Meio Fio de 50": {"Cimento": 0.20, "Britão": 0.05, "Pó de Pedra": 0.05, "Areia": 0.05},
+    "Meio Fio de 80": {"Cimento": 0.35, "Britão": 0.08, "Pó de Pedra": 0.08, "Areia": 0.08},
+    "Laje": {"Cimento": 0.15, "Brita 0": 0.03, "Areia": 0.03, "Pó de Pedra": 0.03}
+}
+
+# 4. MENU LATERAL
 menu = st.sidebar.radio("Navegação", ["Painel Geral", "Lançar Produção", "Estoque Insumos"])
 
 # --- 1. PAINEL GERAL ---
@@ -27,55 +40,75 @@ if menu == "Painel Geral":
     with col1:
         st.subheader("Insumos (Matéria-prima)")
         try:
-            df_insumos = carregar_dados("SELECT item, quantidade FROM insumos")
+            df_insumos = carregar_dados("SELECT item as Material, quantidade as Saldo FROM insumos")
+            # Adicionando as unidades que você pediu
+            unidades = {
+                "Cimento": "Unidades (Sacos)",
+                "Areia": "m³",
+                "Pedrisco": "m³",
+                "Pó de Pedra": "m³",
+                "Brita 0": "m³",
+                "Britão": "m³"
+            }
+            df_insumos['Unidade'] = df_insumos['Material'].map(unidades).fillna("un")
             st.dataframe(df_insumos, use_container_width=True)
         except:
-            st.error("Erro ao carregar a tabela 'insumos'.")
+            st.warning("Tabela de insumos não encontrada ou vazia.")
 
     with col2:
-        st.subheader("Produtos Prontos")
+        st.subheader("Produtos Prontos (Pátio)")
         try:
-            df_blocos = carregar_dados("SELECT tipo, quantidade_total FROM estoque_blocos")
+            df_blocos = carregar_dados("SELECT tipo as Produto, quantidade_total as Estoque FROM estoque_blocos")
             st.dataframe(df_blocos, use_container_width=True)
         except:
-            st.error("Erro ao carregar a tabela 'estoque_blocos'.")
+            st.info("Aguardando primeiro lançamento de produção para criar a tabela.")
 
-# --- 2. LANÇAR PRODUÇÃO ---
+# --- 2. LANÇAR PRODUÇÃO (COM BAIXA AUTOMÁTICA) ---
 elif menu == "Lançar Produção":
     st.header("➕ Registrar Nova Produção")
     
     with st.form("form_producao"):
-        # LISTA ATUALIZADA DE PRODUTOS
-        lista_produtos = [
-            "Bloco de 10", "Bloco de 15", "Bloco de 20", 
-            "Bloco Sextavado", "Bloco Intertravado", 
-            "Laje", "Meio Fio de 50", "Meio Fio de 80"
-        ]
-        produto = st.selectbox("Selecione o Produto Fabricado", lista_produtos)
-        quantidade = st.number_input("Quantidade Produzida (unidades)", min_value=1, step=1)
-        btn_produzir = st.form_submit_button("Confirmar Lançamento")
+        produto = st.selectbox("O que foi fabricado?", list(receitas.keys()))
+        quantidade = st.number_input("Quantidade produzida (unidades)", min_value=1, step=1)
+        btn_produzir = st.form_submit_button("Confirmar e Baixar Estoque")
         
         if btn_produzir:
-            st.success(f"Produção de {quantidade} unidades de {produto} registrada!")
-
-# --- 3. ESTOQUE INSUMOS ---
-elif menu == "Estoque Insumos":
-    st.header("📥 Entrada de Materiais")
-    
-    with st.form("form_insumos"):
-        # ADICIONE AQUI SE TIVER MAIS MATERIAIS ALÉM DESSES
-        lista_materiais = ["Cimento", "Areia", "Brita", "Pó de Pedra", "Pedrisco"]
-        insumo = st.selectbox("Material Recebido", lista_materiais)
-        qtd_entrada = st.number_input("Quantidade Recebida", min_value=0.0, step=0.1)
-        btn_insumo = st.form_submit_button("Atualizar Estoque")
-        
-        if btn_insumo:
             try:
                 conn = conectar()
                 cursor = conn.cursor()
-                cursor.execute("UPDATE insumos SET quantidade = quantidade + ? WHERE item = ?", (qtd_entrada, insumo))
+                
+                # 1. Criar tabelas se não existirem (evita o erro que você viu)
+                cursor.execute("CREATE TABLE IF NOT EXISTS estoque_blocos (tipo TEXT PRIMARY KEY, quantidade_total REAL)")
+                
+                # 2. Descontar Insumos
+                gastos = receitas[produto]
+                for material, gasto_unitario in gastos.items():
+                    total_gasto = gasto_unitario * quantidade
+                    cursor.execute("UPDATE insumos SET quantidade = quantidade - ? WHERE item = ?", (total_gasto, material))
+                
+                # 3. Aumentar Estoque do Bloco
+                cursor.execute("INSERT INTO estoque_blocos (tipo, quantidade_total) VALUES (?, ?) ON CONFLICT(tipo) DO UPDATE SET quantidade_total = quantidade_total + ?", (produto, quantidade, quantidade))
+                
                 conn.commit()
                 conn.close()
-                st.success(f"Estoque de {insumo} atualizado!")
+                st.success(f"Sucesso! Produzido {quantidade} de {produto}. Estoque de insumos atualizado automaticamente.")
             except Exception as e:
-                st.error(f"Erro no banco: {e}")
+                st.error(f"Erro ao processar: {e}")
+
+# --- 3. ESTOQUE INSUMOS ---
+elif menu == "Estoque Insumos":
+    st.header("📥 Entrada de Materiais (Compra)")
+    with st.form("form_insumos"):
+        insumo = st.selectbox("Material Recebido", ["Cimento", "Areia", "Pedrisco", "Pó de Pedra", "Brita 0", "Britão"])
+        unidade_label = "Sacos" if insumo == "Cimento" else "Metros Cúbicos (m³)"
+        qtd_entrada = st.number_input(f"Quantidade em {unidade_label}", min_value=0.0, step=0.1)
+        btn_insumo = st.form_submit_button("Adicionar ao Estoque")
+        
+        if btn_insumo:
+            conn = conectar()
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE IF NOT EXISTS insumos (item TEXT PRIMARY KEY, quantidade REAL)")
+            cursor.execute("INSERT INTO insumos (item, quantidade) VALUES (?, ?) ON CONFLICT(item) DO UPDATE SET quantidade = quantidade + ?", (insumo, qtd_entrada, qtd_entrada))
+            conn.commit()
+            conn.close()
+            st.success(f"Entrada de {qtd_entrada} de {insumo} registrada!")

@@ -2,7 +2,7 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 
-.st.write("Conectando ao banco de dados...")
+st.write("Conectando ao banco de dados...")
 def conectar():
     return sqlite3.connect('fabrica_blocos.db')
 

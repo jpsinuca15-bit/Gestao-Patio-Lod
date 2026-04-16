@@ -1,5 +1,8 @@
+import streamlit as st
 import sqlite3
+import pandas as pd
 
+.st.write("Conectando ao banco de dados...")
 def conectar():
     return sqlite3.connect('fabrica_blocos.db')
 
@@ -25,8 +28,7 @@ def adicionar_estoque_insumo(item, qtd):
     conn.commit()
     conn.close()
     
-    import streamlit as st
-import pandas as pd
+
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Gestão de Pátio LOD", layout="wide")

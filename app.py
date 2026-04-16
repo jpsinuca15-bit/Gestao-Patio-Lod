@@ -1,131 +1,87 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-import os
 
-# ===== BANCO =====
-DB = os.path.join(os.getcwd(), "fabrica_blocos.db")
-
+# 1. FUNÇÕES DE BANCO DE DADOS
 def conectar():
-    return sqlite3.connect(DB, check_same_thread=False)
+    return sqlite3.connect('fabrica_blocos.db')
 
-def criar_tabelas():
-    conn = conectar()
-    c = conn.cursor()
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS insumos (
-        item TEXT PRIMARY KEY,
-        quantidade REAL
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS estoque_blocos (
-        tipo TEXT PRIMARY KEY,
-        quantidade_total REAL
-    )
-    """)
-
-    conn.commit()
-    conn.close()
-
-def carregar(query):
+def carregar_dados(query):
     conn = conectar()
     df = pd.read_sql_query(query, conn)
     conn.close()
     return df
 
-criar_tabelas()
+# 2. CONFIGURAÇÃO DA PÁGINA
+st.set_page_config(page_title="Gestão de Pátio LOD", layout="wide")
+st.title("🏗️ Gestão de Pátio LOD")
 
-# ===== APP =====
-st.set_page_config(page_title="Gestão", layout="wide")
-st.title("🏗️ Gestão de Pátio")
+# 3. REFERÊNCIA DE RECEITAS (Para visualização rápida)
+receitas_referencia = {
+    "Bloco de 10": "Cimento, Pó de Pedra, Pedrisco",
+    "Bloco de 15": "Cimento, Pó de Pedra, Pedrisco",
+    "Bloco de 20": "Cimento, Pó de Pedra, Pedrisco",
+    "Bloco Sextavado": "Cimento, Brita 0, Areia, Pó de Pedra",
+    "Bloco Intertravado": "Cimento, Brita 0, Areia, Pó de Pedra",
+    "Meio Fio": "Cimento, Brita 1, Pó de Pedra, Areia",
+    "Laje": "Cimento, Brita 0, Areia, Pó de Pedra"
+}
 
-menu = st.sidebar.radio("Menu", ["Painel", "Produção", "Entrada"])
+# 4. MENU LATERAL
+menu = st.sidebar.radio("Navegação", ["Painel Geral", "Lançar Produção", "Estoque Insumos"])
 
-# ===== PAINEL =====
-if menu == "Painel":
+# --- 1. PAINEL GERAL ---
+if menu == "Painel Geral":
+    st.header("📊 Controle de Estoque")
     col1, col2 = st.columns(2)
-
+    
     with col1:
-        st.subheader("Insumos")
+        st.subheader("Insumos (Matéria-prima)")
         try:
-            df = carregar("SELECT * FROM insumos")
-            st.dataframe(df, use_container_width=True)
+            df_insumos = carregar_dados("SELECT item as Material, quantidade as Saldo FROM insumos")
+            def definir_unidade(material):
+                return "Sacos" if material == "Cimento" else "m³"
+            df_insumos['Unidade'] = df_insumos['Material'].apply(definir_unidade)
+            st.dataframe(df_insumos, use_container_width=True)
         except:
-            st.warning("Sem dados")
+            st.warning("Estoque de insumos vazio.")
 
     with col2:
-        st.subheader("Produtos")
+        st.subheader("Produtos Prontos (Pátio)")
         try:
-            df = carregar("SELECT * FROM estoque_blocos")
-            st.dataframe(df, use_container_width=True)
+            df_blocos = carregar_dados("SELECT tipo as Produto, quantidade_total as Estoque FROM estoque_blocos")
+            st.dataframe(df_blocos, use_container_width=True)
         except:
-            st.warning("Sem dados")
+            st.info("Nenhum produto no pátio.")
 
-# ===== PRODUÇÃO =====
-elif menu == "Produção":
-    st.header("Produção")
+# --- 2. LANÇAR PRODUÇÃO ---
+elif menu == "Lançar Produção":
+    st.header("➕ Registrar Nova Produção")
+    produto = st.selectbox("O que foi fabricado?", list(receitas_referencia.keys()))
+    st.info(f"💡 **Receita padrão:** {receitas_referencia[produto]}")
 
-    produto = st.selectbox("Produto", [
-        "Bloco 10", "Bloco 15", "Bloco 20"
-    ])
-
-    qtd_prod = st.number_input("Quantidade", min_value=1)
-
-    cimento = st.number_input("Cimento", min_value=0.0)
-    areia = st.number_input("Areia", min_value=0.0)
-
-    if st.button("Salvar Produção"):
-        conn = conectar()
-        c = conn.cursor()
-
-        # baixa insumos
-        for nome, valor in [("Cimento", cimento), ("Areia", areia)]:
-            if valor > 0:
-                c.execute("""
-                INSERT OR IGNORE INTO insumos (item, quantidade)
-                VALUES (?, 0)
-                """, (nome,))
-
-                c.execute("""
-                UPDATE insumos SET quantidade = quantidade - ?
-                WHERE item = ?
-                """, (valor, nome))
-
-        # soma produção
-        c.execute("""
-        INSERT INTO estoque_blocos (tipo, quantidade_total)
-        VALUES (?, ?)
-        ON CONFLICT(tipo) DO UPDATE SET
-        quantidade_total = quantidade_total + excluded.quantidade_total
-        """, (produto, qtd_prod))
-
-        conn.commit()
-        conn.close()
-
-        st.success("Produção salva")
-
-# ===== ENTRADA =====
-elif menu == "Entrada":
-    st.header("Entrada de Material")
-
-    item = st.selectbox("Material", ["Cimento", "Areia"])
-    qtd = st.number_input("Quantidade", min_value=0.0)
-
-    if st.button("Adicionar"):
-        conn = conectar()
-        c = conn.cursor()
-
-        c.execute("""
-        INSERT INTO insumos (item, quantidade)
-        VALUES (?, ?)
-        ON CONFLICT(item) DO UPDATE SET
-        quantidade = quantidade + excluded.quantidade
-        """, (item, qtd))
-
-        conn.commit()
-        conn.close()
-
-        st.success("Entrada salva")
+    with st.form("form_producao"):
+        qtd_prod = st.number_input(f"Quantidade de {produto} fabricada", min_value=1, step=1)
+        st.divider()
+        st.write("### Informe o gasto TOTAL de materiais para baixar do estoque:")
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            g_cimento = st.number_input("Cimento (Sacos)", min_value=0.0)
+            g_areia = st.number_input("Areia (m³)", min_value=0.0)
+        with c2:
+            g_po_pedra = st.number_input("Pó de Pedra (m³)", min_value=0.0)
+            g_pedrisco = st.number_input("Pedrisco (m³)", min_value=0.0)
+        with c3:
+            g_brita0 = st.number_input("Brita 0 (m³)", min_value=0.0)
+            g_brita1 = st.number_input("Brita 1 (m³)", min_value=0.0) # Corrigido aqui
+        
+        btn = st.form_submit_button("Confirmar Lançamento")
+        if btn:
+            conn = conectar()
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE IF NOT EXISTS estoque_blocos (tipo TEXT PRIMARY KEY, quantidade_total REAL)")
+            cursor.execute("CREATE TABLE IF NOT EXISTS insumos (item TEXT PRIMARY KEY, quantidade REAL)")
+            
+            baixas = [
+                (g_cimento, "Cimento"), (g_areia,
